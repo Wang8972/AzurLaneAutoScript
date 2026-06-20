@@ -1,3 +1,6 @@
+from module.base.button import Button
+from module.base.timer import Timer
+from module.base.utils import load_image
 from module.campaign.campaign_base import CampaignBase
 from module.campaign.run import CampaignRun
 from module.combat.assets import BATTLE_PREPARATION
@@ -19,7 +22,18 @@ from module.retire.scanner import ShipScanner
 from module.ui.assets import BACK_ARROW
 from module.ui.page import page_fleet
 
-SIM_VALUE = 0.92
+SIM_VALUE = 0.90
+
+# Equipment preset UI, hand-measured on CN 1280x720 (panel layout is server-independent).
+EQUIP_PRESET_ENTER = Button(
+    area=(1140, 88, 1231, 111), color=(213, 150, 70),
+    button=(1140, 88, 1231, 111), name='EQUIP_PRESET_ENTER')
+EQUIP_PRESET_RECORD_1 = Button(
+    area=(1208, 258, 1245, 328), color=(112, 146, 182),
+    button=(1208, 258, 1245, 328), name='EQUIP_PRESET_RECORD_1')
+# Fixed repair-tool template cropped from the equipment storage (same rendering as the
+# equipment-selection list), so list-to-list template matching is reliable (~0.95).
+REPAIR_TOOL_FILE = './assets/cn/equipment/EQUIP_REPAIR_TOOL.png'
 
 
 class GemsCampaignOverride(CampaignBase):
@@ -93,92 +107,116 @@ class GemsFarming(CampaignRun, FleetEquipment, Dock):
         else:
             return self.config.Fleet_Fleet1
 
-    def _record_equipment(self, enter, index_list):
+    def _equip_repair_tools(self, enter):
         """
-        Record the current ship's equipment, then take it off.
+        Flagship: unload everything, then equip a repair tool in the two auxiliary
+        slots (3, 4) by matching a fixed repair-tool template against the
+        equipment-selection list.
 
-        Non-fatal: the equipment-upgrade page assets are unmaintained and may no
-        longer match the game UI (the bot can get stuck there). On failure, skip
-        the equipment transfer and recover to page_fleet so the gems run continues
-        with a plain ship swap instead of crashing the whole task.
+        Non-fatal: on stuck, skip and recover to page_fleet so the gems run
+        continues with a plain ship swap instead of crashing the whole task.
         """
         try:
             self.fleet_enter_ship(enter)
-            self.ship_equipment_record_image(index_list=index_list)
             self.ship_equipment_take_off()
+            # Reuse the existing image take-on matcher, but with a fixed repair-tool
+            # template injected for the two auxiliary slots instead of a recording.
+            repair = load_image(REPAIR_TOOL_FILE)
+            self.equipment_list = {3: repair, 4: repair}
+            self.ship_equipment_take_on_image(index_list=[3, 4])
             self.fleet_back()
         except (GameStuckError, GameTooManyClickError) as e:
-            logger.warning(f'Equipment record failed, skip equipment change ({e})')
+            logger.warning(f'Equip flagship repair tools failed, skip ({e})')
             self.equipment_list = {}
             self.device.stuck_record_clear()
             self.device.click_record_clear()
             self.ui_ensure(page_fleet)
 
-    def _takeon_equipment(self, enter, index_list):
+    def _equip_preset(self, enter):
         """
-        Take on the previously recorded equipment. Non-fatal, see _record_equipment.
+        Vanguard: open the equipment preset tab, unload everything, then apply
+        preset record 1 (the loadout the user saved for the vanguard).
+
+        Non-fatal: see _equip_repair_tools.
         """
         try:
             self.fleet_enter_ship(enter)
+            # Switch to the preset tab (记录 rows / 更换 buttons become visible).
+            self.ui_click(EQUIP_PRESET_ENTER, appear_button=EQUIPMENT_OPEN,
+                          check_button=EQUIP_PRESET_RECORD_1, skip_first_screenshot=True)
+            # Unload all equipment (卸载所有装备 == EQUIP_OFF, already handled).
             self.ship_equipment_take_off()
-            self.ship_equipment_take_on_image(index_list=index_list)
+            # Apply preset record 1 (第一行的 更换).
+            self._apply_preset_record_1()
             self.fleet_back()
         except (GameStuckError, GameTooManyClickError) as e:
-            logger.warning(f'Equipment take-on failed, skip ({e})')
+            logger.warning(f'Equip vanguard preset failed, skip ({e})')
             self.device.stuck_record_clear()
             self.device.click_record_clear()
             self.ui_ensure(page_fleet)
 
+    def _apply_preset_record_1(self, skip_first_screenshot=True):
+        """
+        Click 记录1 的 更换 (apply preset) and confirm, until the equip info bar shows.
+        """
+        logger.info('Apply equipment preset record 1')
+        click_timer = Timer(3)
+        confirm_timer = Timer(10, count=20).start()
+        while 1:
+            if skip_first_screenshot:
+                skip_first_screenshot = False
+            else:
+                self.device.screenshot()
+
+            if self.handle_popup_confirm('EQUIP_PRESET'):
+                continue
+            # End: equip succeeded (info bar shows after applying the preset).
+            if self.info_bar_count():
+                break
+            # Safety timeout: don't loop forever if the preset is empty / UI differs.
+            if confirm_timer.reached():
+                logger.warning('Apply preset record 1 timeout')
+                break
+            if click_timer.reached():
+                self.device.click(EQUIP_PRESET_RECORD_1)
+                click_timer.reset()
+
     def flagship_change(self):
         """
-        Change flagship and flagship's equipment
-        If config.GemsFarming_CommonCV == 'any', only change auxiliary equipment
+        Change flagship, then equip repair tools in its two auxiliary slots.
 
         Returns:
             bool: True if flagship changed.
         """
-        if self.config.GemsFarming_CommonCV == 'any':
-            index_list = range(3, 5)
-        else:
-            index_list = range(0, 5)
         logger.hr('Change flagship', level=1)
         self.fleet_enter(self.fleet_to_attack)
-
-        if self.CHANGE_EQUIP:
-            logger.hr('Record flagship equipment', level=2)
-            self._record_equipment(FLEET_DETAIL_ENTER_FLAGSHIP, index_list)
 
         logger.hr('Change flagship', level=2)
         success = self.flagship_change_execute()
 
-        if self.CHANGE_EQUIP and self.equipment_list:
-            logger.hr('Equip flagship equipment', level=2)
-            self._takeon_equipment(FLEET_DETAIL_ENTER_FLAGSHIP, index_list)
+        if self.CHANGE_EQUIP:
+            logger.hr('Equip flagship repair tools', level=2)
+            self._equip_repair_tools(FLEET_DETAIL_ENTER_FLAGSHIP)
 
         return success
 
     def vanguard_change(self):
         """
-        Change vanguard and vanguard's equipment
+        Change vanguard, then apply its equipment preset (record 1).
 
         Returns:
             bool: True if vanguard changed
         """
-
         logger.hr('Change vanguard', level=1)
         logger.attr('ChangeVanguard', self.config.GemsFarming_ChangeVanguard)
         self.fleet_enter(self.fleet_to_attack)
 
-        if self.CHANGE_EQUIP:
-            logger.hr('Record vanguard equipment', level=2)
-            self._record_equipment(FLEET_DETAIL_ENTER, range(0, 5))
-
         logger.hr('Change vanguard', level=2)
         success = self.vanguard_change_execute()
 
-        if self.CHANGE_EQUIP and self.equipment_list:
-            logger.hr('Equip vanguard equipment', level=2)
-            self._takeon_equipment(FLEET_DETAIL_ENTER, range(0, 5))
+        if self.CHANGE_EQUIP:
+            logger.hr('Equip vanguard preset', level=2)
+            self._equip_preset(FLEET_DETAIL_ENTER)
 
         return success
 
