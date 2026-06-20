@@ -98,11 +98,27 @@ class GemsFarming(CampaignRun, FleetEquipment, Dock):
         Returns:
             bool: True if flagship changed.
         """
+        if self.config.GemsFarming_CommonCV == 'any':
+            index_list = range(3, 5)
+        else:
+            index_list = range(0, 5)
         logger.hr('Change flagship', level=1)
         self.fleet_enter(self.fleet_to_attack)
 
+        logger.hr('Record flagship equipment', level=2)
+        self.fleet_enter_ship(FLEET_DETAIL_ENTER_FLAGSHIP)
+        self.ship_equipment_record_image(index_list=index_list)
+        self.ship_equipment_take_off()
+        self.fleet_back()
+
         logger.hr('Change flagship', level=2)
         success = self.flagship_change_execute()
+
+        logger.hr('Equip flagship equipment', level=2)
+        self.fleet_enter_ship(FLEET_DETAIL_ENTER_FLAGSHIP)
+        self.ship_equipment_take_off()
+        self.ship_equipment_take_on_image(index_list=index_list)
+        self.fleet_back()
 
         return success
 
@@ -118,8 +134,20 @@ class GemsFarming(CampaignRun, FleetEquipment, Dock):
         logger.attr('ChangeVanguard', self.config.GemsFarming_ChangeVanguard)
         self.fleet_enter(self.fleet_to_attack)
 
+        logger.hr('Record vanguard equipment', level=2)
+        self.fleet_enter_ship(FLEET_DETAIL_ENTER)
+        self.ship_equipment_record_image()
+        self.ship_equipment_take_off()
+        self.fleet_back()
+
         logger.hr('Change vanguard', level=2)
         success = self.vanguard_change_execute()
+
+        logger.hr('Equip vanguard equipment', level=2)
+        self.fleet_enter_ship(FLEET_DETAIL_ENTER)
+        self.ship_equipment_take_off()
+        self.ship_equipment_take_on_image()
+        self.fleet_back()
 
         return success
 
