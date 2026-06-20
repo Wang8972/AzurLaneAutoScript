@@ -15,7 +15,10 @@ EQUIP_INFO_BAR = ButtonGrid(
 EQUIPMENT_GRID = ButtonGrid(
     origin=(696, 170), delta=(86.25, 0), button_shape=(32, 32), grid_shape=(5, 1), name='EQUIPMENT_GRID')
 EQUIPMENT_SCROLL = Scroll(EQUIP_SCROLL, color=(247, 211, 66), name='EQUIP_SCROLL')
-SIM_VALUE = 0.90
+# Lowered from 0.90: the upgrade-page icon and the equipment-list icon are rendered
+# slightly differently after the UI redesign, so an exact 0.90 match no longer triggers.
+# 0.70 is more permissive — watch the logged similarity and bump back up if it mis-equips.
+SIM_VALUE = 0.70
 
 equipping_filter = Switch('Equipping_filter')
 equipping_filter.add_state('on', check_button=EQUIPPING_ON)
@@ -149,6 +152,7 @@ class EquipmentChange(Equipment):
         res = cv2.matchTemplate(self.device.screenshot(), np.array(
             self.equipment_list[index]), cv2.TM_CCOEFF_NORMED)
         _, sim, _, point = cv2.minMaxLoc(res)
+        logger.info(f'Equipment {index} match similarity: {sim:.3f} (threshold {SIM_VALUE})')
 
         if sim > SIM_VALUE:
             self._equip_equipment(point)
@@ -168,6 +172,7 @@ class EquipmentChange(Equipment):
             res = cv2.matchTemplate(self.device.screenshot(), np.array(
                 self.equipment_list[index]), cv2.TM_CCOEFF_NORMED)
             _, sim, _, point = cv2.minMaxLoc(res)
+            logger.info(f'Equipment {index} match similarity (scroll): {sim:.3f} (threshold {SIM_VALUE})')
 
             if sim > SIM_VALUE:
                 self._equip_equipment(point)
