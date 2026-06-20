@@ -29,8 +29,8 @@ EQUIP_PRESET_ENTER = Button(
     area=(1140, 88, 1231, 111), color=(213, 150, 70),
     button=(1140, 88, 1231, 111), name='EQUIP_PRESET_ENTER')
 EQUIP_PRESET_RECORD_1 = Button(
-    area=(1208, 258, 1245, 328), color=(112, 146, 182),
-    button=(1208, 258, 1245, 328), name='EQUIP_PRESET_RECORD_1')
+    area=(1206, 263, 1238, 323), color=(101, 150, 197),
+    button=(1206, 263, 1238, 323), name='EQUIP_PRESET_RECORD_1')
 # Fixed repair-tool template cropped from the equipment storage (same rendering as the
 # equipment-selection list), so list-to-list template matching is reliable (~0.95).
 REPAIR_TOOL_FILE = './assets/cn/equipment/EQUIP_REPAIR_TOOL.png'
@@ -205,8 +205,13 @@ class GemsFarming(CampaignRun, FleetEquipment, Dock):
         Click 记录1 的 更换 (apply preset) and confirm, until the equip info bar shows.
         """
         logger.info('Apply equipment preset record 1')
+        # The take-off above leaves an info bar ("卸载成功") on screen. Clear it first,
+        # otherwise the loop sees it and breaks immediately, never clicking 更换 — which
+        # is exactly the "unloaded but nothing equipped" symptom.
+        self.handle_info_bar()
         click_timer = Timer(3)
         confirm_timer = Timer(10, count=20).start()
+        clicked = False
         while 1:
             if skip_first_screenshot:
                 skip_first_screenshot = False
@@ -214,9 +219,10 @@ class GemsFarming(CampaignRun, FleetEquipment, Dock):
                 self.device.screenshot()
 
             if self.handle_popup_confirm('EQUIP_PRESET'):
+                clicked = True
                 continue
-            # End: equip succeeded (info bar shows after applying the preset).
-            if self.info_bar_count():
+            # End: equip succeeded — the info bar only appears AFTER we click 更换.
+            if clicked and self.info_bar_count():
                 break
             # Safety timeout: don't loop forever if the preset is empty / UI differs.
             if confirm_timer.reached():
@@ -224,6 +230,7 @@ class GemsFarming(CampaignRun, FleetEquipment, Dock):
                 break
             if click_timer.reached():
                 self.device.click(EQUIP_PRESET_RECORD_1)
+                clicked = True
                 click_timer.reset()
 
     def flagship_change(self):
