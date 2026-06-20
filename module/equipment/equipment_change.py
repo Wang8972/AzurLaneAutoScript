@@ -69,6 +69,11 @@ class EquipmentChange(Equipment):
                 if not info_bar_disappeared:
                     self.handle_info_bar()
                     info_bar_disappeared = True
+                # UPGRADE_ENTER_CHECK can match while the upgrade popup is still
+                # fading in, so the icon at EQUIP_SAVE may still be semi-transparent.
+                # Wait until that region stops changing before capturing, otherwise a
+                # half-rendered template is saved and never matches in the equipment list.
+                self.wait_until_stable(EQUIP_SAVE)
                 self.equipment_list[index] = self.image_crop(EQUIP_SAVE)
                 # Quit upgrade inform
                 self.ui_click(
