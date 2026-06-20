@@ -107,6 +107,24 @@ class GemsFarming(CampaignRun, FleetEquipment, Dock):
         else:
             return self.config.Fleet_Fleet1
 
+    def _unload_equipment(self, enter):
+        """
+        Take all equipment off the current ship BEFORE swapping it out, so those
+        items become free and the replacement ship can equip them. This is the
+        original flow's "unload old ship" step (do not remove it).
+
+        Non-fatal: on stuck, skip and recover to page_fleet.
+        """
+        try:
+            self.fleet_enter_ship(enter)
+            self.ship_equipment_take_off()
+            self.fleet_back()
+        except (GameStuckError, GameTooManyClickError) as e:
+            logger.warning(f'Unload old equipment failed, skip ({e})')
+            self.device.stuck_record_clear()
+            self.device.click_record_clear()
+            self.ui_ensure(page_fleet)
+
     def _equip_repair_tools(self, enter):
         """
         Flagship: unload everything, then equip a repair tool in the two auxiliary
@@ -142,8 +160,10 @@ class GemsFarming(CampaignRun, FleetEquipment, Dock):
         try:
             self.fleet_enter_ship(enter)
             # Switch to the preset tab (记录 rows / 更换 buttons become visible).
-            self.ui_click(EQUIP_PRESET_ENTER, appear_button=EQUIPMENT_OPEN,
-                          check_button=EQUIP_PRESET_RECORD_1, skip_first_screenshot=True)
+            # These preset buttons have NO template file, so they cannot be used as a
+            # template check_button (ui_click -> appear -> load_image(None) crashes).
+            # Verify the panel opened by color instead (appear with offset=False).
+            self._open_preset_tab()
             # Unload all equipment (卸载所有装备 == EQUIP_OFF, already handled).
             self.ship_equipment_take_off()
             # Apply preset record 1 (第一行的 更换).
@@ -154,6 +174,31 @@ class GemsFarming(CampaignRun, FleetEquipment, Dock):
             self.device.stuck_record_clear()
             self.device.click_record_clear()
             self.ui_ensure(page_fleet)
+
+    def _open_preset_tab(self, skip_first_screenshot=True):
+        """
+        Click the in-game equipment 预设 (preset) tab until a record row appears.
+        Verified by color (the preset buttons have no template file, so appear() is
+        called with offset=False to use color matching instead of template matching).
+        """
+        logger.info('Open equipment preset tab')
+        click_timer = Timer(3)
+        confirm_timer = Timer(10).start()
+        while 1:
+            if skip_first_screenshot:
+                skip_first_screenshot = False
+            else:
+                self.device.screenshot()
+
+            # End: a preset record row (更换 button) is visible.
+            if self.appear(EQUIP_PRESET_RECORD_1, offset=False):
+                break
+            if confirm_timer.reached():
+                logger.warning('Open preset tab timeout')
+                break
+            if click_timer.reached():
+                self.device.click(EQUIP_PRESET_ENTER)
+                click_timer.reset()
 
     def _apply_preset_record_1(self, skip_first_screenshot=True):
         """
@@ -191,6 +236,10 @@ class GemsFarming(CampaignRun, FleetEquipment, Dock):
         logger.hr('Change flagship', level=1)
         self.fleet_enter(self.fleet_to_attack)
 
+        if self.CHANGE_EQUIP:
+            logger.hr('Unload flagship equipment', level=2)
+            self._unload_equipment(FLEET_DETAIL_ENTER_FLAGSHIP)
+
         logger.hr('Change flagship', level=2)
         success = self.flagship_change_execute()
 
@@ -210,6 +259,10 @@ class GemsFarming(CampaignRun, FleetEquipment, Dock):
         logger.hr('Change vanguard', level=1)
         logger.attr('ChangeVanguard', self.config.GemsFarming_ChangeVanguard)
         self.fleet_enter(self.fleet_to_attack)
+
+        if self.CHANGE_EQUIP:
+            logger.hr('Unload vanguard equipment', level=2)
+            self._unload_equipment(FLEET_DETAIL_ENTER)
 
         logger.hr('Change vanguard', level=2)
         success = self.vanguard_change_execute()
