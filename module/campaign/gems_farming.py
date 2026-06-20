@@ -3,7 +3,7 @@ from module.campaign.run import CampaignRun
 from module.combat.assets import BATTLE_PREPARATION
 from module.equipment.assets import *
 from module.equipment.fleet_equipment import FleetEquipment
-from module.exception import CampaignEnd, ScriptError
+from module.exception import CampaignEnd, GameStuckError, GameTooManyClickError, ScriptError
 from module.handler.assets import AUTO_SEARCH_MAP_OPTION_OFF
 from module.logger import logger
 from module.map.assets import FLEET_PREPARATION, MAP_PREPARATION
@@ -68,6 +68,9 @@ class GemsCampaignOverride(CampaignBase):
 
 
 class GemsFarming(CampaignRun, FleetEquipment, Dock):
+    # Set to False to disable equipment transfer entirely (only swap ships, no equipment record/take-on).
+    # The equipment-upgrade page assets are unmaintained and may break again on game updates.
+    CHANGE_EQUIP = True
 
     def load_campaign(self, name, folder='campaign_main'):
         super().load_campaign(name, folder)
@@ -90,6 +93,42 @@ class GemsFarming(CampaignRun, FleetEquipment, Dock):
         else:
             return self.config.Fleet_Fleet1
 
+    def _record_equipment(self, enter, index_list):
+        """
+        Record the current ship's equipment, then take it off.
+
+        Non-fatal: the equipment-upgrade page assets are unmaintained and may no
+        longer match the game UI (the bot can get stuck there). On failure, skip
+        the equipment transfer and recover to page_fleet so the gems run continues
+        with a plain ship swap instead of crashing the whole task.
+        """
+        try:
+            self.fleet_enter_ship(enter)
+            self.ship_equipment_record_image(index_list=index_list)
+            self.ship_equipment_take_off()
+            self.fleet_back()
+        except (GameStuckError, GameTooManyClickError) as e:
+            logger.warning(f'Equipment record failed, skip equipment change ({e})')
+            self.equipment_list = {}
+            self.device.stuck_record_clear()
+            self.device.click_record_clear()
+            self.ui_ensure(page_fleet)
+
+    def _takeon_equipment(self, enter, index_list):
+        """
+        Take on the previously recorded equipment. Non-fatal, see _record_equipment.
+        """
+        try:
+            self.fleet_enter_ship(enter)
+            self.ship_equipment_take_off()
+            self.ship_equipment_take_on_image(index_list=index_list)
+            self.fleet_back()
+        except (GameStuckError, GameTooManyClickError) as e:
+            logger.warning(f'Equipment take-on failed, skip ({e})')
+            self.device.stuck_record_clear()
+            self.device.click_record_clear()
+            self.ui_ensure(page_fleet)
+
     def flagship_change(self):
         """
         Change flagship and flagship's equipment
@@ -105,20 +144,16 @@ class GemsFarming(CampaignRun, FleetEquipment, Dock):
         logger.hr('Change flagship', level=1)
         self.fleet_enter(self.fleet_to_attack)
 
-        logger.hr('Record flagship equipment', level=2)
-        self.fleet_enter_ship(FLEET_DETAIL_ENTER_FLAGSHIP)
-        self.ship_equipment_record_image(index_list=index_list)
-        self.ship_equipment_take_off()
-        self.fleet_back()
+        if self.CHANGE_EQUIP:
+            logger.hr('Record flagship equipment', level=2)
+            self._record_equipment(FLEET_DETAIL_ENTER_FLAGSHIP, index_list)
 
         logger.hr('Change flagship', level=2)
         success = self.flagship_change_execute()
 
-        logger.hr('Equip flagship equipment', level=2)
-        self.fleet_enter_ship(FLEET_DETAIL_ENTER_FLAGSHIP)
-        self.ship_equipment_take_off()
-        self.ship_equipment_take_on_image(index_list=index_list)
-        self.fleet_back()
+        if self.CHANGE_EQUIP and self.equipment_list:
+            logger.hr('Equip flagship equipment', level=2)
+            self._takeon_equipment(FLEET_DETAIL_ENTER_FLAGSHIP, index_list)
 
         return success
 
@@ -134,20 +169,16 @@ class GemsFarming(CampaignRun, FleetEquipment, Dock):
         logger.attr('ChangeVanguard', self.config.GemsFarming_ChangeVanguard)
         self.fleet_enter(self.fleet_to_attack)
 
-        logger.hr('Record vanguard equipment', level=2)
-        self.fleet_enter_ship(FLEET_DETAIL_ENTER)
-        self.ship_equipment_record_image()
-        self.ship_equipment_take_off()
-        self.fleet_back()
+        if self.CHANGE_EQUIP:
+            logger.hr('Record vanguard equipment', level=2)
+            self._record_equipment(FLEET_DETAIL_ENTER, range(0, 5))
 
         logger.hr('Change vanguard', level=2)
         success = self.vanguard_change_execute()
 
-        logger.hr('Equip vanguard equipment', level=2)
-        self.fleet_enter_ship(FLEET_DETAIL_ENTER)
-        self.ship_equipment_take_off()
-        self.ship_equipment_take_on_image()
-        self.fleet_back()
+        if self.CHANGE_EQUIP and self.equipment_list:
+            logger.hr('Equip vanguard equipment', level=2)
+            self._takeon_equipment(FLEET_DETAIL_ENTER, range(0, 5))
 
         return success
 
