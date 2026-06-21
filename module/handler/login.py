@@ -16,8 +16,20 @@ from module.ui.assets import *
 from module.ui.page import page_campaign_menu
 from module.ui.ui import UI
 
+# Gyroscope floating ball shown at the top-left of the login (tap-to-start) screen.
+# Drag it onto the "服务器 / SERVER" rectangle to bring up the "隐藏悬浮球" dialog,
+# then click 隐藏 to hide it for this session. Coordinates are in 1280x720 space.
+FLOATING_BALL = (215, 35)           # drag start: the ball, top-left corner
+FLOATING_BALL_SERVER = (485, 583)   # drag end: the "服务器 / SERVER" rectangle
+HIDE_FLOATING_BALL = Button(
+    area=(770, 645, 857, 680), color=(32, 195, 140),
+    button=(770, 645, 857, 680), name='HIDE_FLOATING_BALL')
+
 
 class LoginHandler(UI):
+    # Hide the gyroscope floating ball before logging in. Set False to disable.
+    HIDE_FLOATING_BALL_ENABLE = True
+
     def _handle_app_login(self):
         """
         Pages:
@@ -34,6 +46,7 @@ class LoginHandler(UI):
         confirm_timer = Timer(1.5, count=4).start()
         orientation_timer = Timer(5)
         login_success = False
+        floating_ball_done = False
         self.device.stuck_record_clear()
         self.device.click_record_clear()
 
@@ -53,6 +66,14 @@ class LoginHandler(UI):
                     break
             else:
                 confirm_timer.reset()
+
+            # Hide the gyroscope floating ball before logging in (once per login)
+            if self.HIDE_FLOATING_BALL_ENABLE and not floating_ball_done \
+                    and not login_success \
+                    and self.match_template_color(LOGIN_CHECK, offset=(30, 30)):
+                self.handle_floating_ball()
+                floating_ball_done = True
+                continue
 
             # Login
             if self.match_template_color(LOGIN_CHECK, offset=(30, 30), interval=5):
@@ -99,6 +120,38 @@ class LoginHandler(UI):
                 continue
 
         return True
+
+    def handle_floating_ball(self):
+        """
+        On the login (tap-to-start) screen the game shows a gyroscope floating
+        ball at the top-left. Drag it onto the "服务器 / SERVER" rectangle to open
+        the "隐藏悬浮球" dialog, then click 隐藏 to hide it for this session.
+
+        The drag is harmless when no ball is present (it lands on the static
+        title background), and the action is gated on the dialog actually
+        appearing, so this safely no-ops when there is nothing to hide.
+
+        Pages:
+            in: login tap-to-start screen (LOGIN_CHECK)
+            out: same screen, floating ball hidden
+
+        Returns:
+            bool: If the floating ball was hidden.
+        """
+        logger.info('Hide floating ball')
+        self.device.drag(FLOATING_BALL, FLOATING_BALL_SERVER, name='FLOATING_BALL_DRAG')
+
+        confirm_timer = Timer(3, count=6).start()
+        while 1:
+            self.device.screenshot()
+            # "隐藏悬浮球" dialog popped up (detected by its teal-green 隐藏 text)
+            if self.image_color_count(HIDE_FLOATING_BALL, color=(32, 195, 140), threshold=180, count=50):
+                self.device.click(HIDE_FLOATING_BALL)
+                logger.info('Floating ball hidden')
+                return True
+            if confirm_timer.reached():
+                logger.info('No floating ball dialog, skip')
+                return False
 
     _user_agreement_timer = Timer(1, count=2)
 
