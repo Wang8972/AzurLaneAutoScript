@@ -12,14 +12,67 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout custom
+        uses: actions/checkout@v4
+        with:
+          ref: custom
+          fetch-depth: 0
+
       - name: Merge upstream into custom
-        env:
-          GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
-          curl --fail-with-body \
-            --request POST \
-            --header "Accept: application/vnd.github+json" \
-            --header "Authorization: Bearer ${GH_TOKEN}" \
-            --header "X-GitHub-Api-Version: 2022-11-28" \
-            https://api.github.com/repos/Wang8972/AzurLaneAutoScript/merge-upstream \
-            --data '{"branch":"custom"}'
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote remove upstream 2>/dev/null || true
+          git remote add upstream https://github.com/LmeSzinc/AzurLaneAutoScript.git
+          git fetch upstream master
+
+          if git merge-base --is-ancestor upstream/master HEAD; then
+            echo "custom already contains the latest upstream/master"
+            exit 0
+          fi
+
+          custom_head=$(git rev-parse HEAD)
+
+          # Merge all non-conflicting upstream changes. For every conflict, keep
+          # the complete custom-side file instead of stopping the scheduled sync.
+          if ! git merge --no-commit --no-ff upstream/master; then
+            while IFS= read -r -d '' file; do
+              echo "Keep custom version of conflicted file: ${file}"
+              if git cat-file -e ":2:${file}" 2>/dev/null; then
+                git checkout --ours -- "${file}"
+                git add -- "${file}"
+              else
+                git rm --ignore-unmatch -- "${file}"
+              fi
+            done < <(git diff --name-only --diff-filter=U -z)
+          fi
+
+          # These files form the existing custom equipment implementation. Keep
+          # them together even when upstream modifies or deletes a dependency.
+          protected_files=(
+            module/campaign/gems_farming.py
+            module/equipment/equipment.py
+            module/equipment/fleet_equipment.py
+          )
+          for file in "${protected_files[@]}"; do
+            if git cat-file -e "${custom_head}:${file}" 2>/dev/null; then
+              git checkout "${custom_head}" -- "${file}"
+              git add -- "${file}"
+            else
+              git rm --ignore-unmatch -- "${file}"
+            fi
+          done
+
+          unresolved=$(git diff --name-only --diff-filter=U)
+          if [[ -n "${unresolved}" ]]; then
+            echo "Unresolved conflicts remain:"
+            echo "${unresolved}"
+            exit 1
+          fi
+
+          git diff --cached --check
+          git commit -m "Merge upstream/master into custom, preserving custom files"
+          git push origin HEAD:custom
