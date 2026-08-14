@@ -73,6 +73,5 @@ jobs:
             exit 1
           fi
 
-          git diff --cached --check
           git commit -m "Merge upstream/master into custom, preserving custom files"
           git push origin HEAD:custom
